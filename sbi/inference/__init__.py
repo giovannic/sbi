@@ -43,6 +43,7 @@ from sbi.inference.posteriors import (
 )
 from sbi.inference.potentials import (
     likelihood_estimator_based_potential,
+    annealed_likelihood_estimator_based_potential,
     mixed_likelihood_estimator_based_potential,
     posterior_estimator_based_potential,
     ratio_estimator_based_potential,

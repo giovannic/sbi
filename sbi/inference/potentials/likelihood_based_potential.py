@@ -115,6 +115,100 @@ class LikelihoodBasedPotential(BasePotential):
                 )
             return log_likelihood_batches + self.prior.log_prob(theta)  # type: ignore
 
+def annealed_likelihood_estimator_based_potential(
+    likelihood_estimator: ConditionalDensityEstimator,
+    prior: Distribution,
+    x_o: Optional[Tensor],
+    enable_transform: bool = True,
+    alpha:float = 1.
+) -> Tuple[Callable, TorchTransform]:
+    r"""Returns potential $\log(p(x_o|\theta)p(\theta))$ for likelihood-based methods.
+
+    It also returns a transformation that can be used to transform the potential into
+    unconstrained space.
+
+    Args:
+        likelihood_estimator: The density estimator modelling the likelihood.
+        prior: The prior distribution.
+        x_o: The observed data at which to evaluate the likelihood.
+        enable_transform: Whether to transform parameters to unconstrained space.
+             When False, an identity transform will be returned for `theta_transform`.
+
+    Returns:
+        The potential function $p(x_o|\theta)p(\theta)$ and a transformation that maps
+        to unconstrained space.
+    """
+
+    device = str(next(likelihood_estimator.parameters()).device)
+
+    potential_fn = AnnealedLikelihoodBasedPotential(
+        likelihood_estimator,
+        prior,
+        x_o,
+        device=device,
+        alpha=alpha
+    )
+    theta_transform = mcmc_transform(
+        prior, device=device, enable_transform=enable_transform
+    )
+
+    return potential_fn, theta_transform
+
+class AnnealedLikelihoodBasedPotential(LikelihoodBasedPotential):
+
+    def __init__(
+        self,
+        likelihood_estimator: ConditionalDensityEstimator,
+        prior: Distribution,
+        x_o: Optional[Tensor],
+        device: str = "cpu",
+        alpha: float = 1.
+    ):
+        r"""Returns the potential function for likelihood-based methods.
+
+        Args:
+            likelihood_estimator: The density estimator modelling the likelihood.
+            prior: The prior distribution.
+            x_o: The observed data at which to evaluate the likelihood.
+            device: The device to which parameters and data are moved before evaluating
+                the `likelihood_nn`.
+
+        Returns:
+            The potential function $p(x_o|\theta)p(\theta)$.
+        """
+        super().__init__(likelihood_estimator, prior, x_o, device)
+        self.alpha = alpha
+
+    @property
+    def alpha(self):
+        return self._alpha
+
+    @alpha.setter
+    def alpha(self, value):
+        assert value <= 1. and value >= 0.
+        self._alpha = value
+
+    def __call__(self, theta: Tensor, track_gradients: bool = True) -> Tensor:
+        r"""Returns the annealed potential $\log(p(x_o|\theta)^\alpha p(\theta))$.
+
+        Args:
+            theta: The parameter set at which to evaluate the potential function.
+            track_gradients: Whether to track the gradients.
+
+        Returns:
+            The potential $\log(p(x_o|\theta)^\alpha p(\theta))$.
+        """
+
+        # Calculate likelihood over trials and in one batch.
+        log_likelihood_trial_sum = _log_likelihoods_over_trials(
+            x=self.x_o,
+            theta=theta.to(self.device),
+            estimator=self.likelihood_estimator,
+            track_gradients=track_gradients,
+        )
+
+        return log_likelihood_trial_sum * self._alpha + self.prior.log_prob(theta)  # type: ignore
+
 
 def _log_likelihoods_over_trials(
     x: Tensor,
